@@ -39,14 +39,18 @@ python proxy.py --upstream http://127.0.0.1:8000 --proxy-port 7654 --ui-port 765
 
 ## 功能
 
-- ✅ 透传所有 HTTP 方法，原始数据不变
-- ✅ 流式 SSE 实时转发，结束后自动合并解析
-- ✅ 非流式 JSON 响应直接展示
-- ✅ 消息双栏视图（Request / Response）
-- ✅ 思考链（reasoning）折叠展示
-- ✅ Raw JSON 视图，支持一键复制
-- ✅ 侧边栏5秒局部刷新，不影响当前 tab
-- ✅ URL 格式 `/ids/<record_id>` 可分享
+- [x] 透传所有 HTTP 方法，原始数据不变
+- [x] 流式 SSE 实时转发，结束后自动合并解析
+- [x] 非流式 JSON 响应直接展示
+- [x] 消息双栏视图（Request / Response）
+- [x] 思考链（reasoning）折叠展示
+- [x] Raw JSON 视图，支持一键复制
+- [x] 侧边栏5秒局部刷新，不影响当前 tab
+- [x] URL 格式 `/ids/<record_id>` 可分享
+
+## License
+
+[MIT](LICENSE)
 
 ## 目录结构
 
