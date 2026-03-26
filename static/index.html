@@ -768,8 +768,8 @@ function msgCard(role, content, reasoning, toolCalls) {
   if (reasoning) {
     html += `
   <div class="reasoning-block">
-    <div class="reasoning-toggle" onclick="toggleBlock(this)">思考链</div>
-    <div class="reasoning-body">${esc(reasoning)}</div>
+    <div class="reasoning-toggle open" onclick="toggleBlock(this)">思考链</div>
+    <div class="reasoning-body open">${esc(reasoning)}</div>
   </div>`;
   }
 
@@ -787,8 +787,8 @@ function msgCard(role, content, reasoning, toolCalls) {
     }).join('');
     html += `
   <div class="tool-calls-block">
-    <div class="tool-calls-toggle" onclick="toggleBlock(this)">Tool Calls (${toolCalls.length})</div>
-    <div class="tool-calls-body">${itemsHtml}</div>
+    <div class="tool-calls-toggle open" onclick="toggleBlock(this)">Tool Calls (${toolCalls.length})</div>
+    <div class="tool-calls-body open">${itemsHtml}</div>
   </div>`;
   }
 
