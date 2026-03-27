@@ -539,7 +539,7 @@ pre, .json-pre {
           <div class="pane">
             <div class="pane-head">
               ↑ Request
-              <button class="copy-btn" onclick="copyPaneJson('req')">复制</button>
+              <button class="copy-btn" onclick="copyPaneJson('req', this)">复制</button>
             </div>
             <div class="pane-body">
               <div id="req-messages" class="msg-list"></div>
@@ -549,7 +549,7 @@ pre, .json-pre {
           <div class="pane">
             <div class="pane-head">
               ↓ Response
-              <button class="copy-btn" onclick="copyPaneJson('resp')">复制</button>
+              <button class="copy-btn" onclick="copyPaneJson('resp', this)">复制</button>
             </div>
             <div class="pane-body">
               <div id="resp-messages" class="msg-list"></div>
@@ -563,13 +563,13 @@ pre, .json-pre {
         <div id="pane-split" style="display:grid;grid-template-columns:1fr 1fr;flex:1;overflow:hidden">
           <div class="pane">
             <div class="pane-head">↑ Request JSON
-              <button class="copy-btn" onclick="copyText(document.getElementById('req-raw').textContent)">复制</button>
+              <button class="copy-btn" onclick="copyText(document.getElementById('req-raw').textContent, this)">复制</button>
             </div>
             <div class="pane-body"><pre id="req-raw"></pre></div>
           </div>
           <div class="pane">
             <div class="pane-head">↓ Response JSON
-              <button class="copy-btn" onclick="copyText(document.getElementById('resp-raw').textContent)">复制</button>
+              <button class="copy-btn" onclick="copyText(document.getElementById('resp-raw').textContent, this)">复制</button>
             </div>
             <div class="pane-body"><pre id="resp-raw"></pre></div>
           </div>
@@ -580,7 +580,7 @@ pre, .json-pre {
       <div id="panel-chunks" class="panel">
         <div class="pane-head" style="padding:8px 14px;flex-shrink:0">
           原始 SSE 数据行
-          <button class="copy-btn" onclick="copyText(document.getElementById('chunks-view').innerText)">复制</button>
+          <button class="copy-btn" onclick="copyText(document.getElementById('chunks-view').innerText, this)">复制</button>
         </div>
         <div id="chunks-view"></div>
       </div>
@@ -815,16 +815,42 @@ function esc(s) {
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-function copyText(text) {
-  navigator.clipboard.writeText(text).catch(() => {});
+function copyText(text, btn) {
+  const feedback = (ok) => {
+    if (!btn) return;
+    const orig = btn.textContent;
+    btn.textContent = ok ? '已复制' : '失败';
+    btn.style.color = ok ? 'var(--accent, #4a9eff)' : '#e55';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => feedback(true), () => fallback(text, btn, feedback));
+  } else {
+    fallback(text, btn, feedback);
+  }
 }
 
-function copyPaneJson(side) {
+function fallback(text, btn, feedback) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (feedback) feedback(ok);
+  } catch(e) {
+    if (feedback) feedback(false);
+  }
+}
+
+function copyPaneJson(side, btn) {
   if (!currentRecord) return;
   const data = side === 'req'
     ? currentRecord.req_json
     : (currentRecord.is_sse ? currentRecord.resp_merged : currentRecord.resp_json);
-  copyText(JSON.stringify(data, null, 2));
+  copyText(JSON.stringify(data, null, 2), btn);
 }
 
 // ══ Boot ══════════════════════════════════════════════════════════════════
