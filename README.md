@@ -21,16 +21,6 @@ python proxy.py --upstream http://127.0.0.1:8000 --proxy-port 7654 --ui-port 765
 python proxy.py --db-path data/proxy.db
 ```
 
-## Docker Compose
-
-```bash
-docker compose up --build
-```
-
-- 默认上游是 `http://host.docker.internal:8080`
-- 如需改成别的上游，修改 [docker-compose.yml](/Users/liubaoyuan/VibeProjects/llm-proxy-inspector/docker-compose.yml) 里的 `UPSTREAM_BASE`
-- sqlite 数据会持久化到宿主机的 `./data/proxy.db`
-
 ## 使用
 
 - 客户端将 API 地址指向 `http://<your-host>:7654`
