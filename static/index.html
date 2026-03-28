@@ -331,7 +331,11 @@ pre {
   letter-spacing: .08em;
   text-transform: uppercase;
 }
-.turn-pane-body { padding: 12px; }
+.turn-pane-body {
+  padding: 12px;
+  max-height: min(70vh, 960px);
+  overflow-y: auto;
+}
 .msg-list { display: flex; flex-direction: column; gap: 10px; }
 .msg-card {
   background: var(--surface);
@@ -367,6 +371,9 @@ pre {
   font-size: 12.5px;
   line-height: 1.75;
   white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
 }
 .reasoning-block,
 .tool-calls-block {
@@ -418,6 +425,8 @@ pre {
   padding: 10px 12px;
   color: var(--text2);
   white-space: pre-wrap;
+  max-height: 320px;
+  overflow: auto;
 }
 .tool-calls-body { padding: 8px 12px; }
 .tool-call-item {
@@ -442,6 +451,8 @@ pre {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+  max-height: 280px;
+  overflow: auto;
 }
 .chunk-line {
   font-family: var(--mono);
@@ -697,22 +708,75 @@ function renderTurn(record, turnIndex) {
 
 function renderResponse(record) {
   if (record.is_sse && record.resp_merged) {
-    const choices = record.resp_merged.choices || [];
+    const choices = normalizeResponseChoices(record.resp_merged);
     return choices.map(c => msgCard(c.role || 'assistant', c.content, c.reasoning_content, c.tool_calls)).join('')
       || '<span style="color:var(--text3);font-size:12px">流式响应解析中…</span>';
   }
   if (record.resp_json) {
-    const choices = record.resp_json.choices || [];
+    const choices = normalizeResponseChoices(record.resp_json);
     if (choices.length) {
       return choices.map(c => {
         const msg = c.message || {};
-        return msgCard(msg.role || 'assistant', msg.content, msg.reasoning_content, msg.tool_calls);
+        return msgCard(
+          msg.role || c.role || 'assistant',
+          msg.content ?? c.content,
+          msg.reasoning_content ?? c.reasoning_content,
+          msg.tool_calls ?? c.tool_calls,
+        );
       }).join('');
     }
     return `<pre>${esc(JSON.stringify(record.resp_json, null, 2))}</pre>`;
   }
   if (record.resp_raw) return `<pre>${esc(record.resp_raw)}</pre>`;
   return '<span style="color:var(--text3);font-size:12px">等待响应…</span>';
+}
+
+function normalizeResponseChoices(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  if (Array.isArray(payload.choices)) return payload.choices;
+
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  if (!output.length) return [];
+
+  let role = 'assistant';
+  let content = '';
+  let reasoning = '';
+  const toolCalls = [];
+
+  output.forEach(item => {
+    if (!item || typeof item !== 'object') return;
+    if (item.type === 'message') {
+      role = item.role || role;
+      const parts = Array.isArray(item.content) ? item.content : [];
+      content += parts
+        .filter(part => part && part.type === 'output_text')
+        .map(part => part.text || '')
+        .join('');
+    } else if (item.type === 'reasoning') {
+      const parts = Array.isArray(item.summary) ? item.summary : [];
+      const text = parts
+        .filter(part => part && typeof part.text === 'string' && part.text)
+        .map(part => part.text)
+        .join('\n');
+      if (text) reasoning += (reasoning ? '\n' : '') + text;
+    } else if (item.type === 'function_call') {
+      toolCalls.push({
+        id: item.call_id || item.id,
+        type: 'function',
+        function: {
+          name: item.name || item.id || '(unknown)',
+          arguments: item.arguments || '',
+        },
+      });
+    }
+  });
+
+  return [{
+    role,
+    content,
+    reasoning_content: reasoning || null,
+    tool_calls: toolCalls,
+  }];
 }
 
 function renderChunks(sseRecords) {

@@ -140,6 +140,212 @@ def _merge_delta(acc: dict, delta: dict) -> None:
             acc[key] = val
 
 
+def _ensure_list_index(items: list[Any], index: int, factory) -> Any:
+    while len(items) <= index:
+        items.append(factory())
+    return items[index]
+
+
+def _response_output_to_chat(response: dict[str, Any]) -> dict[str, Any]:
+    output = response.get("output")
+    if not isinstance(output, list):
+        output = []
+
+    role = "assistant"
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+
+        item_type = item.get("type")
+        if item_type == "message":
+            role = item.get("role") or role
+            for part in item.get("content", []):
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "output_text" and isinstance(part.get("text"), str):
+                    content_parts.append(part["text"])
+        elif item_type == "reasoning":
+            for part in item.get("summary", []):
+                if not isinstance(part, dict):
+                    continue
+                if isinstance(part.get("text"), str) and part["text"].strip():
+                    reasoning_parts.append(part["text"])
+        elif item_type == "function_call":
+            tool_calls.append(
+                {
+                    "id": item.get("call_id") or item.get("id"),
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name") or item.get("id") or "(unknown)",
+                        "arguments": item.get("arguments") or "",
+                    },
+                }
+            )
+
+    choice = {
+        "index": 0,
+        "role": role,
+        "content": "".join(content_parts),
+        "finish_reason": response.get("status"),
+    }
+    if tool_calls:
+        choice["tool_calls"] = tool_calls
+    if reasoning_parts:
+        choice["reasoning_content"] = "\n".join(reasoning_parts)
+
+    return {
+        "id": response.get("id"),
+        "object": "chat.completion",
+        "created": response.get("created_at"),
+        "model": response.get("model"),
+        "usage": response.get("usage"),
+        "choices": [choice],
+        "response": response,
+    }
+
+
+def parse_responses_sse_lines(lines: list[str]) -> dict:
+    events: list[dict[str, Any]] = []
+    for line in lines:
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload == "[DONE]":
+            break
+        try:
+            events.append(json.loads(payload))
+        except json.JSONDecodeError:
+            pass
+
+    if not events:
+        return {}
+
+    response_obj: dict[str, Any] | None = None
+    output_items: dict[str, dict[str, Any]] = {}
+    output_order: list[tuple[int, str]] = []
+
+    def ensure_item(item_id: str, output_index: int | None = None) -> dict[str, Any]:
+        item = output_items.get(item_id)
+        if item is None:
+            item = {"id": item_id}
+            output_items[item_id] = item
+            if output_index is not None:
+                output_order.append((output_index, item_id))
+        elif output_index is not None and not any(existing_id == item_id for _, existing_id in output_order):
+            output_order.append((output_index, item_id))
+        return item
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+
+        event_type = event.get("type")
+        response = event.get("response")
+        if isinstance(response, dict):
+            response_obj = copy.deepcopy(response)
+
+        if event_type == "response.output_item.added":
+            item = event.get("item")
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("id")
+            if not isinstance(item_id, str):
+                continue
+            current = ensure_item(item_id, event.get("output_index"))
+            current.clear()
+            current.update(copy.deepcopy(item))
+        elif event_type == "response.output_item.done":
+            item = event.get("item")
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("id")
+            if not isinstance(item_id, str):
+                continue
+            current = ensure_item(item_id, event.get("output_index"))
+            current.clear()
+            current.update(copy.deepcopy(item))
+        elif event_type == "response.content_part.added":
+            item_id = event.get("item_id")
+            content_index = event.get("content_index")
+            part = event.get("part")
+            if not isinstance(item_id, str) or not isinstance(content_index, int) or not isinstance(part, dict):
+                continue
+            item = ensure_item(item_id, event.get("output_index"))
+            content = item.setdefault("content", [])
+            if not isinstance(content, list):
+                item["content"] = []
+                content = item["content"]
+            _ensure_list_index(content, content_index, dict).update(copy.deepcopy(part))
+        elif event_type == "response.content_part.done":
+            item_id = event.get("item_id")
+            content_index = event.get("content_index")
+            part = event.get("part")
+            if not isinstance(item_id, str) or not isinstance(content_index, int) or not isinstance(part, dict):
+                continue
+            item = ensure_item(item_id, event.get("output_index"))
+            content = item.setdefault("content", [])
+            if not isinstance(content, list):
+                item["content"] = []
+                content = item["content"]
+            current = _ensure_list_index(content, content_index, dict)
+            current.clear()
+            current.update(copy.deepcopy(part))
+        elif event_type == "response.output_text.delta":
+            item_id = event.get("item_id")
+            content_index = event.get("content_index")
+            if not isinstance(item_id, str) or not isinstance(content_index, int):
+                continue
+            item = ensure_item(item_id, event.get("output_index"))
+            content = item.setdefault("content", [])
+            if not isinstance(content, list):
+                item["content"] = []
+                content = item["content"]
+            part = _ensure_list_index(content, content_index, dict)
+            part.setdefault("type", "output_text")
+            part["text"] = f"{part.get('text', '')}{event.get('delta', '')}"
+        elif event_type == "response.output_text.done":
+            item_id = event.get("item_id")
+            content_index = event.get("content_index")
+            if not isinstance(item_id, str) or not isinstance(content_index, int):
+                continue
+            item = ensure_item(item_id, event.get("output_index"))
+            content = item.setdefault("content", [])
+            if not isinstance(content, list):
+                item["content"] = []
+                content = item["content"]
+            part = _ensure_list_index(content, content_index, dict)
+            part.setdefault("type", "output_text")
+            if isinstance(event.get("text"), str):
+                part["text"] = event["text"]
+        elif event_type == "response.function_call_arguments.delta":
+            item_id = event.get("item_id")
+            if not isinstance(item_id, str):
+                continue
+            item = ensure_item(item_id, event.get("output_index"))
+            item["arguments"] = f"{item.get('arguments', '')}{event.get('delta', '')}"
+        elif event_type == "response.function_call_arguments.done":
+            item_id = event.get("item_id")
+            if not isinstance(item_id, str):
+                continue
+            item = ensure_item(item_id, event.get("output_index"))
+            if isinstance(event.get("arguments"), str):
+                item["arguments"] = event["arguments"]
+
+    if response_obj is None:
+        response_obj = {}
+    if not response_obj.get("output"):
+        ordered_output = [output_items[item_id] for _, item_id in sorted(output_order, key=lambda entry: entry[0])]
+        if ordered_output:
+            response_obj["output"] = ordered_output
+
+    return _response_output_to_chat(response_obj)
+
+
 def parse_sse_lines(lines: list[str]) -> dict:
     chunks: list[dict] = []
     for line in lines:
@@ -156,6 +362,10 @@ def parse_sse_lines(lines: list[str]) -> dict:
 
     if not chunks:
         return {}
+
+    first_type = chunks[0].get("type")
+    if isinstance(first_type, str) and first_type.startswith("response."):
+        return parse_responses_sse_lines(lines)
 
     first = chunks[0]
     result: dict = {
