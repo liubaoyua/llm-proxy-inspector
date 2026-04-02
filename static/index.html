@@ -74,10 +74,60 @@ body {
   gap: 10px;
   align-items: center;
 }
+.sidebar-filters {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sidebar-filter-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.sidebar-filter-input,
+.sidebar-filter-select,
+.sidebar-filter-clear {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.sidebar-filter-input,
+.sidebar-filter-select {
+  padding: 0 10px;
+}
+.sidebar-filter-input::placeholder {
+  color: var(--text3);
+}
+.sidebar-filter-input:focus,
+.sidebar-filter-select:focus {
+  outline: none;
+  border-color: var(--accent-bd);
+  box-shadow: 0 0 0 3px rgba(42, 91, 215, 0.08);
+}
+.sidebar-filter-clear {
+  cursor: pointer;
+  background: var(--surface);
+  font-weight: 500;
+}
+.sidebar-filter-clear:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent-bd);
+  color: var(--accent);
+}
 #sidebar-list {
   flex: 1;
   overflow-y: auto;
   padding: 4px 0;
+}
+
+.record-group {
+  border-bottom: 1px solid var(--bg);
 }
 #sidebar-list::-webkit-scrollbar,
 .turn-list::-webkit-scrollbar,
@@ -156,6 +206,50 @@ body {
   color: var(--text2);
   font-size: 10.5px;
   line-height: 1.45;
+}
+.record-turns {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px 10px 18px;
+  background: linear-gradient(180deg, rgba(238, 242, 253, 0.5), rgba(255, 255, 255, 0));
+}
+.record-turn-item {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  text-align: left;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 6px;
+  align-items: center;
+  color: var(--text2);
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.record-turn-item:hover {
+  background: var(--surface);
+  border-color: var(--border);
+}
+.record-turn-item.active {
+  background: var(--surface);
+  border-color: var(--accent-bd);
+  box-shadow: inset 0 0 0 1px rgba(42, 91, 215, 0.08);
+  color: var(--text);
+}
+.record-turn-index,
+.record-turn-time {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+}
+.record-turn-label {
+  min-width: 0;
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 #main {
   flex: 1;
@@ -303,6 +397,11 @@ pre {
   display: flex;
   flex-direction: column;
   max-height: calc(100dvh - 120px);
+  scroll-margin-top: 14px;
+}
+.turn-card.selected {
+  border-color: var(--accent-bd);
+  box-shadow: 0 0 0 2px rgba(42, 91, 215, 0.12);
 }
 .turn-head {
   display: flex;
@@ -495,6 +594,7 @@ pre {
 }
 @media (max-width: 980px) {
   #sidebar { width: 250px; }
+  .sidebar-filter-row { grid-template-columns: 1fr; }
   .turn-split { grid-template-columns: 1fr; }
   .turn-card { max-height: none; }
   .turn-pane {
@@ -512,6 +612,22 @@ pre {
     <div id="sidebar-meta">
       <span id="count-badge">0 个会话</span>
       <button id="clear-btn" onclick="clearHistory()">清除</button>
+    </div>
+    <div class="sidebar-filters">
+      <input id="filter-query" class="sidebar-filter-input" placeholder="搜索文本 / model / 方法">
+      <div class="sidebar-filter-row">
+        <input id="filter-path" class="sidebar-filter-input" placeholder="过滤 path">
+        <input id="filter-ip" class="sidebar-filter-input" placeholder="过滤 IP">
+      </div>
+      <div class="sidebar-filter-row">
+        <select id="filter-status" class="sidebar-filter-select">
+          <option value="all">全部状态</option>
+          <option value="ok">成功</option>
+          <option value="err">错误</option>
+          <option value="pending">进行中</option>
+        </select>
+        <button type="button" class="sidebar-filter-clear" onclick="clearFilters()">清空</button>
+      </div>
     </div>
   </div>
   <div id="sidebar-list">
@@ -570,6 +686,7 @@ pre {
 let currentSessionId = null;
 let currentSession = null;
 let currentRecord = null;
+let currentRecordId = null;
 let sessions = [];
 
 function currentSessionNeedsRefresh() {
@@ -604,6 +721,11 @@ async function sessionIdFromUrl() {
 }
 
 async function refreshSidebar() {
+  const query = document.getElementById('filter-query')?.value.trim().toLowerCase() || '';
+  const pathFilter = document.getElementById('filter-path')?.value.trim().toLowerCase() || '';
+  const ipFilter = document.getElementById('filter-ip')?.value.trim().toLowerCase() || '';
+  const statusFilter = document.getElementById('filter-status')?.value || 'all';
+
   try {
     const res = await fetch('/api/sessions');
     sessions = await res.json();
@@ -619,30 +741,88 @@ async function refreshSidebar() {
     return;
   }
 
-  list.innerHTML = sessions.map(s => {
+  const filteredSessions = sessions.filter(s => {
+    const statusCls = s.status == null ? 'pending' : (s.status < 400 ? 'ok' : 'err');
+    if (statusFilter !== 'all' && statusCls !== statusFilter) return false;
+
+    const normalizedPath = String(s.path || '').toLowerCase();
+    const normalizedIp = String(s.client_ip || '').toLowerCase();
+    const haystack = [
+      s.path,
+      s.preview || '',
+      s.model || '',
+      s.method,
+      s.last_time,
+      s.client_ip || '',
+    ].join(' ').toLowerCase();
+
+    if (query && !haystack.includes(query)) return false;
+    if (pathFilter && !normalizedPath.includes(pathFilter)) return false;
+    if (ipFilter && !normalizedIp.includes(ipFilter)) return false;
+    return true;
+  });
+
+  if (!filteredSessions.length) {
+    list.innerHTML = `<div id="list-empty" style="padding:20px 14px;color:var(--text3);font-size:12px">${sessions.length ? '没有匹配的会话' : '等待请求…'}</div>`;
+    return;
+  }
+
+  const activeRecords = currentSession && currentSessionId && currentSession.session && currentSession.session.id === currentSessionId
+    ? (currentSession.records || [])
+    : [];
+
+  list.innerHTML = filteredSessions.map(s => {
     const active = s.id === currentSessionId ? 'active' : '';
     const statusCls = s.status == null ? 'pending' : (s.status < 400 ? 'ok' : 'err');
     const statusTxt = s.status == null ? '…' : s.status;
     const latency = s.latency != null ? s.latency + 'ms' : '';
     const badge = s.is_sse ? '<span class="ri-badge sse">SSE</span>' : '';
     const model = s.model ? `<span style="font-size:10px;color:var(--accent)">${esc(s.model.split('/').pop())}</span>` : '';
+    const ip = s.client_ip ? `<span>${esc(s.client_ip)}</span>` : '';
     const preview = s.preview ? `<div class="session-preview">${esc(s.preview)}</div>` : '';
+    const turns = active && activeRecords.length > 1
+      ? `<div class="record-turns">${activeRecords.map((record, index) => {
+          const recordActive = record.id === currentRecordId ? 'active' : '';
+          return `
+            <button type="button" class="record-turn-item ${recordActive}" onclick="selectRecord('${escAttr(record.id)}', event)">
+              <span class="record-turn-index">#${index + 1}</span>
+              <span class="record-turn-time">${esc(record.time)}</span>
+              <span class="record-turn-label">${esc(getRecordPreview(record) || record.path)}</span>
+            </button>`;
+        }).join('')}</div>`
+      : '';
     return `
-<div class="record-item ${active}" onclick="selectSession('${escAttr(s.id)}')">
-  <span class="ri-method">${s.record_count}</span>
-  <span class="ri-path">${esc(s.path)}</span>
-  <span class="ri-status ${statusCls}">${statusTxt}</span>
-  <div class="ri-meta">${model}${badge}<span>${esc(s.last_time)}${latency ? ' · ' + latency : ''}</span></div>
-  ${preview}
+<div class="record-group">
+  <div class="record-item ${active}" onclick="selectSession('${escAttr(s.id)}')">
+    <span class="ri-method">${s.record_count}</span>
+    <span class="ri-path">${esc(s.path)}</span>
+    <span class="ri-status ${statusCls}">${statusTxt}</span>
+    <div class="ri-meta">${model}${badge}${ip}<span>${esc(s.last_time)}${latency ? ' · ' + latency : ''}</span></div>
+    ${preview}
+  </div>
+  ${turns}
 </div>`;
   }).join('');
 }
 
 async function selectSession(id) {
   currentSessionId = id;
+  currentRecordId = null;
   history.replaceState(null, '', '/sessions/' + id);
   await refreshSidebar();
   await refreshCurrentSession();
+}
+
+function selectRecord(recordId, event) {
+  if (event) event.stopPropagation();
+  currentRecordId = recordId;
+  history.replaceState(null, '', '/ids/' + recordId);
+  currentRecord = (currentSession?.records || []).find(record => record.id === recordId) || currentRecord;
+  refreshSidebar();
+  if (currentSession) {
+    renderDetail(currentSession);
+    highlightSelectedTurn(true);
+  }
 }
 
 async function refreshCurrentSession() {
@@ -651,19 +831,24 @@ async function refreshCurrentSession() {
     const res = await fetch('/api/sessions/' + currentSessionId);
     if (!res.ok) return;
     currentSession = await res.json();
-    currentRecord = (currentSession.records || [])[currentSession.records.length - 1] || null;
+    const records = currentSession.records || [];
+    currentRecord = records.find(record => record.id === currentRecordId) || records[records.length - 1] || null;
+    currentRecordId = currentRecord ? currentRecord.id : null;
   } catch {
     return;
   }
 
   renderDetail(currentSession);
+  await refreshSidebar();
 }
 
 function renderDetail(payload) {
   const session = payload.session;
   const records = payload.records || [];
-  const last = records[records.length - 1] || null;
-  currentRecord = last;
+  const selected = records.find(record => record.id === currentRecordId) || records[records.length - 1] || null;
+  currentRecord = selected;
+  currentRecordId = selected ? selected.id : null;
+  const visibleRecords = selected ? [selected] : [];
 
   document.getElementById('empty').style.display = 'none';
   document.getElementById('detail').style.display = 'flex';
@@ -679,15 +864,15 @@ function renderDetail(payload) {
   }
 
   const latEl = document.getElementById('toolbar-latency');
-  if (last && last.latency != null) {
-    latEl.textContent = last.latency + ' ms';
+  if (selected && selected.latency != null) {
+    latEl.textContent = selected.latency + ' ms';
     latEl.style.display = '';
   } else {
     latEl.style.display = 'none';
   }
 
   const usageEl = document.getElementById('toolbar-usage');
-  const usageText = last ? formatUsage(getUsage(last)) : '';
+  const usageText = selected ? formatUsage(getUsage(selected)) : '';
   if (usageText) {
     usageEl.textContent = usageText;
     usageEl.style.display = '';
@@ -700,16 +885,20 @@ function renderDetail(payload) {
   document.getElementById('tab-chunks').style.display = hasSse ? '' : 'none';
 
   const turnsEl = document.getElementById('session-turns');
-  turnsEl.innerHTML = records.map((record, idx) => renderTurn(record, idx + 1)).join('');
+  turnsEl.innerHTML = visibleRecords.map((record) => {
+    const turnIndex = records.findIndex(item => item.id === record.id) + 1;
+    return renderTurn(record, turnIndex, true);
+  }).join('');
 
   document.getElementById('session-raw').textContent = JSON.stringify(payload, null, 2) || '(empty)';
   renderChunks(records.filter(r => r.is_sse));
+  highlightSelectedTurn(false);
 
   const activeTab = document.querySelector('.tb.active');
   if (activeTab) switchTab(activeTab, true);
 }
 
-function renderTurn(record, turnIndex) {
+function renderTurn(record, turnIndex, isSelected) {
   const reqJson = record.req_json || {};
   const messages = reqJson.messages || [];
   const reqHtml = messages.length
@@ -721,11 +910,13 @@ function renderTurn(record, turnIndex) {
     record.method,
     record.status == null ? 'pending' : String(record.status),
     record.latency != null ? record.latency + 'ms' : null,
+    record.client_ip || null,
   ].filter(Boolean);
   const usageText = formatUsage(getUsage(record));
+  const selectedClass = isSelected ? ' selected' : '';
 
   return `
-<div class="turn-card">
+<div class="turn-card${selectedClass}" id="turn-${escAttr(record.id)}">
   <div class="turn-head">
     <span class="turn-index">#${turnIndex}</span>
     <span>${esc(record.path)}</span>
@@ -865,6 +1056,38 @@ function renderChunks(sseRecords) {
   }).join('');
 }
 
+function highlightSelectedTurn(scroll) {
+  document.querySelectorAll('.turn-card.selected').forEach(el => el.classList.remove('selected'));
+  if (!currentRecordId) return;
+  const el = document.getElementById('turn-' + currentRecordId);
+  if (!el) return;
+  el.classList.add('selected');
+  if (scroll) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function getRecordPreview(record) {
+  const reqJson = (record && record.req_json) || {};
+  const messages = Array.isArray(reqJson.messages) ? reqJson.messages : [];
+  const lastContent = messages[messages.length - 1]?.content;
+  return stringifyPreview(lastContent) || record.path || '';
+}
+
+function stringifyPreview(content) {
+  if (typeof content === 'string') {
+    return content.replace(/\s+/g, ' ').trim();
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map(block => block && typeof block === 'object' && block.type === 'text' ? String(block.text || '') : '')
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  if (content == null) return '';
+  return String(content).replace(/\s+/g, ' ').trim();
+}
+
 function msgCard(role, content, reasoning, toolCalls) {
   const dotCls = ['user', 'assistant', 'system', 'tool'].includes(role) ? role : 'user';
   let bodyHtml = '';
@@ -979,6 +1202,14 @@ function fallbackCopy(text, feedback) {
   }
 }
 
+function clearFilters() {
+  document.getElementById('filter-query').value = '';
+  document.getElementById('filter-path').value = '';
+  document.getElementById('filter-ip').value = '';
+  document.getElementById('filter-status').value = 'all';
+  refreshSidebar();
+}
+
 async function clearHistory() {
   try {
     await fetch('/api/records', { method: 'DELETE' });
@@ -988,6 +1219,7 @@ async function clearHistory() {
   currentSessionId = null;
   currentSession = null;
   currentRecord = null;
+  currentRecordId = null;
   history.replaceState(null, '', '/');
   document.getElementById('empty').style.display = 'flex';
   document.getElementById('detail').style.display = 'none';
@@ -995,9 +1227,26 @@ async function clearHistory() {
 }
 
 (async () => {
+  ['filter-query', 'filter-path', 'filter-ip', 'filter-status'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => { refreshSidebar(); });
+    el.addEventListener('change', () => { refreshSidebar(); });
+  });
+
   await refreshSidebar();
   const sessionId = await sessionIdFromUrl();
-  if (sessionId) await selectSession(sessionId);
+  const route = routeFromUrl();
+  if (route && route.type === 'record') {
+    currentRecordId = route.id;
+    currentSessionId = sessionId;
+    if (currentSessionId) {
+      await refreshSidebar();
+      await refreshCurrentSession();
+    }
+  } else if (sessionId) {
+    await selectSession(sessionId);
+  }
   setInterval(async () => {
     await refreshSidebar();
     if (currentSessionNeedsRefresh()) {
