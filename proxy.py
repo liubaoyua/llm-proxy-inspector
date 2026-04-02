@@ -23,7 +23,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -32,7 +32,8 @@ _parser = argparse.ArgumentParser(description="LLM Proxy Inspector")
 _parser.add_argument("--upstream", default=os.getenv("UPSTREAM_BASE", "http://127.0.0.1:8000"))
 _parser.add_argument("--proxy-port", type=int, default=int(os.getenv("PROXY_PORT", "7654")))
 _parser.add_argument("--ui-port", type=int, default=int(os.getenv("UI_PORT", "7655")))
-_parser.add_argument("--max-records", type=int, default=int(os.getenv("MAX_RECORDS", "200")))
+_parser.add_argument("--max-records", type=int, default=int(os.getenv("MAX_RECORDS", "5000")))
+_parser.add_argument("--session-page-size", type=int, default=int(os.getenv("SESSION_PAGE_SIZE", "100")))
 _parser.add_argument("--db-path", default=os.getenv("DB_PATH", "data/proxy.db"))
 _args = _parser.parse_args()
 
@@ -40,6 +41,7 @@ UPSTREAM_BASE = _args.upstream.rstrip("/")
 PROXY_PORT = _args.proxy_port
 UI_PORT = _args.ui_port
 MAX_RECORDS = _args.max_records
+SESSION_PAGE_SIZE = max(1, _args.session_page_size)
 DB_PATH = Path(_args.db_path)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -623,15 +625,90 @@ def build_session_preview(records: list[dict[str, Any]]) -> str:
     return ""
 
 
-def list_sessions() -> list[dict[str, Any]]:
-    rows = DB.execute("SELECT DISTINCT session_id FROM records").fetchall()
-    sessions = []
+def _session_matches(
+    session: dict[str, Any],
+    q: str = "",
+    path_filter: str = "",
+    ip_filter: str = "",
+    status_filter: str = "all",
+) -> bool:
+    status_cls = "pending" if session.get("status") is None else ("ok" if session["status"] < 400 else "err")
+    if status_filter != "all" and status_cls != status_filter:
+        return False
+
+    normalized_path = str(session.get("path") or "").lower()
+    normalized_ip = str(session.get("client_ip") or "").lower()
+    haystack = " ".join(
+        [
+            str(session.get("path") or ""),
+            str(session.get("preview") or ""),
+            str(session.get("model") or ""),
+            str(session.get("method") or ""),
+            str(session.get("last_time") or ""),
+            str(session.get("client_ip") or ""),
+        ]
+    ).lower()
+
+    if q and q not in haystack:
+        return False
+    if path_filter and path_filter not in normalized_path:
+        return False
+    if ip_filter and ip_filter not in normalized_ip:
+        return False
+    return True
+
+
+def list_sessions(
+    limit: int,
+    offset: int = 0,
+    q: str = "",
+    path_filter: str = "",
+    ip_filter: str = "",
+    status_filter: str = "all",
+) -> dict[str, Any]:
+    rows = DB.execute("SELECT * FROM records ORDER BY created_at ASC").fetchall()
+    if not rows:
+        return {
+            "items": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+            "has_more": False,
+        }
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        records = get_session_records(row["session_id"])
+        record = row_to_record(row)
+        if record is not None:
+            grouped.setdefault(record["session_id"], []).append(record)
+
+    sessions = []
+    for records in grouped.values():
         if records:
             sessions.append(summarize_session(records))
+
     sessions.sort(key=lambda item: item["last_created_at"], reverse=True)
-    return sessions
+    filtered = [
+        session
+        for session in sessions
+        if _session_matches(
+            session,
+            q=q,
+            path_filter=path_filter,
+            ip_filter=ip_filter,
+            status_filter=status_filter,
+        )
+    ]
+    total = len(filtered)
+    page_items = filtered[offset:offset + limit]
+
+    return {
+        "items": page_items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(page_items) < total,
+    }
 
 
 # ── Proxy App ─────────────────────────────────────────────────────────────────
@@ -781,8 +858,22 @@ def api_records():
 
 
 @ui_app.get("/api/sessions")
-def api_sessions():
-    return list_sessions()
+def api_sessions(
+    limit: int = Query(default=SESSION_PAGE_SIZE, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    q: str = Query(default=""),
+    path: str = Query(default=""),
+    ip: str = Query(default=""),
+    status: str = Query(default="all", pattern="^(all|ok|err|pending)$"),
+):
+    return list_sessions(
+        limit=limit,
+        offset=offset,
+        q=q.strip().lower(),
+        path_filter=path.strip().lower(),
+        ip_filter=ip.strip().lower(),
+        status_filter=status,
+    )
 
 
 @ui_app.get("/api/sessions/{session_id}")

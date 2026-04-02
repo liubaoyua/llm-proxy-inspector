@@ -664,6 +664,9 @@ pre {
   <div id="sidebar-list">
     <div id="list-empty" style="padding:20px 14px;color:var(--text3);font-size:12px">等待请求…</div>
   </div>
+  <div id="sidebar-foot" style="padding:10px 12px;border-top:1px solid var(--border);display:none">
+    <button id="load-more-btn" class="sidebar-filter-clear" type="button" style="width:100%" onclick="loadMoreSessions()">加载更多</button>
+  </div>
 </div>
 
 <div id="main">
@@ -719,6 +722,10 @@ let currentSession = null;
 let currentRecord = null;
 let currentRecordId = null;
 let sessions = [];
+let totalSessions = 0;
+let hasMoreSessions = false;
+const sessionPageSize = 100;
+let loadedSessionLimit = sessionPageSize;
 
 function currentSessionNeedsRefresh() {
   if (!currentSessionId) return false;
@@ -758,43 +765,32 @@ async function refreshSidebar() {
   const statusFilter = document.getElementById('filter-status')?.value || 'all';
 
   try {
-    const res = await fetch('/api/sessions');
-    sessions = await res.json();
+    const params = new URLSearchParams({
+      limit: String(loadedSessionLimit),
+      offset: '0',
+      q: query,
+      path: pathFilter,
+      ip: ipFilter,
+      status: statusFilter,
+    });
+    const res = await fetch('/api/sessions?' + params.toString());
+    const payload = await res.json();
+    sessions = Array.isArray(payload.items) ? payload.items : [];
+    totalSessions = Number(payload.total || 0);
+    hasMoreSessions = Boolean(payload.has_more);
   } catch {
     return;
   }
 
-  document.getElementById('count-badge').textContent = sessions.length + ' 个会话';
+  const countText = totalSessions > sessions.length
+    ? `已加载 ${sessions.length} / ${totalSessions} 个会话`
+    : `${sessions.length} 个会话`;
+  document.getElementById('count-badge').textContent = countText;
+  document.getElementById('sidebar-foot').style.display = hasMoreSessions ? '' : 'none';
 
   const list = document.getElementById('sidebar-list');
   if (!sessions.length) {
-    list.innerHTML = '<div id="list-empty" style="padding:20px 14px;color:var(--text3);font-size:12px">等待请求…</div>';
-    return;
-  }
-
-  const filteredSessions = sessions.filter(s => {
-    const statusCls = s.status == null ? 'pending' : (s.status < 400 ? 'ok' : 'err');
-    if (statusFilter !== 'all' && statusCls !== statusFilter) return false;
-
-    const normalizedPath = String(s.path || '').toLowerCase();
-    const normalizedIp = String(s.client_ip || '').toLowerCase();
-    const haystack = [
-      s.path,
-      s.preview || '',
-      s.model || '',
-      s.method,
-      s.last_time,
-      s.client_ip || '',
-    ].join(' ').toLowerCase();
-
-    if (query && !haystack.includes(query)) return false;
-    if (pathFilter && !normalizedPath.includes(pathFilter)) return false;
-    if (ipFilter && !normalizedIp.includes(ipFilter)) return false;
-    return true;
-  });
-
-  if (!filteredSessions.length) {
-    list.innerHTML = `<div id="list-empty" style="padding:20px 14px;color:var(--text3);font-size:12px">${sessions.length ? '没有匹配的会话' : '等待请求…'}</div>`;
+    list.innerHTML = `<div id="list-empty" style="padding:20px 14px;color:var(--text3);font-size:12px">${totalSessions ? '没有匹配的会话' : '等待请求…'}</div>`;
     return;
   }
 
@@ -802,7 +798,7 @@ async function refreshSidebar() {
     ? (currentSession.records || [])
     : [];
 
-  list.innerHTML = filteredSessions.map(s => {
+  list.innerHTML = sessions.map(s => {
     const active = s.id === currentSessionId ? 'active' : '';
     const statusCls = s.status == null ? 'pending' : (s.status < 400 ? 'ok' : 'err');
     const statusTxt = s.status == null ? '…' : s.status;
@@ -834,6 +830,12 @@ async function refreshSidebar() {
   ${turns}
 </div>`;
   }).join('');
+}
+
+async function loadMoreSessions() {
+  if (!hasMoreSessions) return;
+  loadedSessionLimit += sessionPageSize;
+  await refreshSidebar();
 }
 
 async function selectSession(id) {
@@ -1257,6 +1259,7 @@ async function clearHistory() {
   currentSession = null;
   currentRecord = null;
   currentRecordId = null;
+  loadedSessionLimit = sessionPageSize;
   history.replaceState(null, '', '/');
   document.getElementById('empty').style.display = 'flex';
   document.getElementById('detail').style.display = 'none';

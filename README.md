@@ -15,7 +15,7 @@ pip install -r requirements.txt
 python proxy.py
 
 # 自定义
-python proxy.py --upstream http://127.0.0.1:8000 --proxy-port 7654 --ui-port 7655
+python proxy.py --upstream http://127.0.0.1:8000 --proxy-port 7654 --ui-port 7655 --max-records 5000 --session-page-size 100
 
 # 指定 sqlite 数据文件
 python proxy.py --db-path data/proxy.db
@@ -56,6 +56,7 @@ python proxy.py --db-path data/proxy.db
 - [x] URL 格式 `/ids/<record_id>` 可分享
 - [x] sqlite 持久化，重启后历史不丢
 - [x] 会话视图，连续对话按 session 聚合展示
+- [x] 会话列表分页加载，避免历史过多时前端全量拉取
 
 ## License
 

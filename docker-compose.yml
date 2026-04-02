@@ -12,6 +12,8 @@ services:
       UPSTREAM_BASE: http://host.docker.internal:8080
       PROXY_PORT: "7654"
       UI_PORT: "7655"
+      MAX_RECORDS: "5000"
+      SESSION_PAGE_SIZE: "100"
       DB_PATH: /app/data/proxy.db
     volumes:
       - ./data:/app/data
