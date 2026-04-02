@@ -423,10 +423,20 @@ pre {
   color: var(--text3);
   font-size: 10.5px;
 }
+.turn-list.multi-turn .turn-card {
+  height: calc(100dvh - 120px);
+  max-height: calc(100dvh - 120px);
+}
 .turn-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
   min-height: 0;
+}
+.turn-list.multi-turn .turn-split {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
 }
 .turn-pane {
   min-width: 0;
@@ -436,6 +446,20 @@ pre {
   min-height: 0;
 }
 .turn-pane:last-child { border-right: none; }
+.turn-list.multi-turn .turn-pane {
+  border-right: none;
+  min-height: 0;
+}
+.turn-list.multi-turn .turn-pane.request-pane {
+  flex: 1 1 auto;
+}
+.turn-list.multi-turn .turn-pane.response-pane {
+  flex: 0 0 auto;
+  max-height: 50%;
+}
+.turn-list.multi-turn .turn-pane + .turn-pane {
+  border-top: 1px solid var(--border);
+}
 .turn-pane-head {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
@@ -451,6 +475,13 @@ pre {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+.turn-list.multi-turn .turn-pane-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+.turn-list.multi-turn .turn-pane.response-pane .turn-pane-body {
+  flex: 0 0 auto;
 }
 .msg-list { display: flex; flex-direction: column; gap: 10px; }
 .msg-card {
@@ -845,6 +876,7 @@ async function refreshCurrentSession() {
 function renderDetail(payload) {
   const session = payload.session;
   const records = payload.records || [];
+  const isMultiTurn = records.length > 1;
   const selected = records.find(record => record.id === currentRecordId) || records[records.length - 1] || null;
   currentRecord = selected;
   currentRecordId = selected ? selected.id : null;
@@ -885,9 +917,10 @@ function renderDetail(payload) {
   document.getElementById('tab-chunks').style.display = hasSse ? '' : 'none';
 
   const turnsEl = document.getElementById('session-turns');
+  turnsEl.classList.toggle('multi-turn', isMultiTurn);
   turnsEl.innerHTML = visibleRecords.map((record) => {
     const turnIndex = records.findIndex(item => item.id === record.id) + 1;
-    return renderTurn(record, turnIndex, true);
+    return renderTurn(record, turnIndex, true, isMultiTurn);
   }).join('');
 
   document.getElementById('session-raw').textContent = JSON.stringify(payload, null, 2) || '(empty)';
@@ -898,7 +931,7 @@ function renderDetail(payload) {
   if (activeTab) switchTab(activeTab, true);
 }
 
-function renderTurn(record, turnIndex, isSelected) {
+function renderTurn(record, turnIndex, isSelected, isMultiTurn) {
   const reqJson = record.req_json || {};
   const messages = reqJson.messages || [];
   const reqHtml = messages.length
@@ -913,21 +946,25 @@ function renderTurn(record, turnIndex, isSelected) {
     record.client_ip || null,
   ].filter(Boolean);
   const usageText = formatUsage(getUsage(record));
-  const selectedClass = isSelected ? ' selected' : '';
+  const cls = [
+    'turn-card',
+    isSelected ? 'selected' : '',
+    isMultiTurn ? 'multi-turn' : '',
+  ].filter(Boolean).join(' ');
 
   return `
-<div class="turn-card${selectedClass}" id="turn-${escAttr(record.id)}">
+<div class="${cls}" id="turn-${escAttr(record.id)}">
   <div class="turn-head">
     <span class="turn-index">#${turnIndex}</span>
     <span>${esc(record.path)}</span>
     <span class="turn-meta">${esc(parts.join(' · '))}${usageText ? ' · ' + esc(usageText) : ''}</span>
   </div>
   <div class="turn-split">
-    <div class="turn-pane">
+    <div class="turn-pane request-pane">
       <div class="turn-pane-head">Request</div>
       <div class="turn-pane-body"><div class="msg-list">${reqHtml}</div></div>
     </div>
-    <div class="turn-pane">
+    <div class="turn-pane response-pane">
       <div class="turn-pane-head">Response</div>
       <div class="turn-pane-body"><div class="msg-list">${respHtml}</div></div>
     </div>
